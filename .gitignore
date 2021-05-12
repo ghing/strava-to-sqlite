@@ -1,0 +1,10 @@
+.env
+
+*.swp
+
+venv
+*.egg-info
+__pycache__
+
+auth.json
+strava.db
