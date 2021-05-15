@@ -4,11 +4,14 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 
 import click
+import fiona
 from playwright.sync_api import sync_playwright
 import requests
 from requests_oauthlib import OAuth2Session
+from shapely.geometry import shape
 from sqlite_utils import Database
 
 from strava_to_sqlite.auth_http_server import (
@@ -182,12 +185,15 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
     page.click("button:has-text(\"Log In\")")
     # assert page.url == "https://www.strava.com/dashboard"
 
+    activity_gpx_info = []
+
     for activity in activities:
         gpx_path = gpx_dir / gpx_filename(activity)
 
         # TODO: Support forcing the re-download of the activity
         if gpx_path.exists():
             # Don't re-download a GPX file that already exists
+            activity_gpx_info.append((activity['id'], gpx_path))
             continue
 
         # Go to page for activities 
@@ -203,11 +209,11 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
         path = download.path()
 
         shutil.copyfile(path, gpx_path)
+        activity_gpx_info.append((activity['id'], gpx_path))
 
-    # ---------------------
     context.close()
 
-    # TODO: Load files into the database
+    return activity_gpx_info
 
 @cli.command()
 @click.argument(
@@ -268,9 +274,114 @@ def activity_gpx(db_path, auth, cache_dir, activity_id=[]):
 
     else:
         # User didn't specify activity IDs. Download them all.
+        # TODO: Download only GPX files that don't have a record in the
+        # GPX table.
         activities = list(db["activities"].rows_where(
             select="id, name, start_date_local"
         ))
 
     with sync_playwright() as playwright:
-        download_gpx(playwright, activities, STRAVA_USERNAME, STRAVA_PASSWORD, user_data_dir, gpx_dir)
+        activity_gpx_paths = download_gpx(
+            playwright,
+            activities,
+            STRAVA_USERNAME,
+            STRAVA_PASSWORD,
+            user_data_dir,
+            gpx_dir
+        )
+
+    load_activity_gpx_tracks(activity_gpx_paths, db_path)
+
+def init_gpx_table(con):
+    """Initialize spatial metadata and table for GPX data"""
+    cur = con.cursor()
+    # Initialize spatial metadata.
+    meta_table_exists_sql = """
+    SELECT count(name)
+    FROM sqlite_master
+    WHERE
+      type='table'
+      AND name='spatial_ref_sys'
+    """
+    cur.execute(meta_table_exists_sql)
+    if cur.fetchone()[0] != 1:
+        init_spatial_meta_sql = "SELECT InitSpatialMetaData();"
+        cur.execute(init_spatial_meta_sql)
+
+    # TODO: Figure out how/if to enforce the foreign key constraint.
+    create_table_sql = """
+    CREATE TABLE IF NOT EXISTS activity_gpx_tracks (
+        id INTEGER PRIMARY KEY
+    );
+    """
+    cur.execute(create_table_sql)
+
+    result = cur.execute("PRAGMA table_info(activity_gpx_tracks)")
+    colnames = [x[1] for x in result]
+    if "geometry" not in colnames:
+        add_spatial_column_sql = "SELECT AddGeometryColumn('activity_gpx_tracks', 'geometry', 4326, 'MULTILINESTRING');"
+        cur.execute(add_spatial_column_sql)
+
+    con.commit()
+
+def load_activity_gpx_tracks(activity_gpx_info, db_path):
+    """Load activity GPX tracks into the SQLite database"""
+    con = sqlite3.connect(db_path)
+    con.enable_load_extension(True)
+    con.load_extension("mod_spatialite")
+
+    init_gpx_table(con)
+
+    cur = con.cursor()
+
+    for activity_id, gpx_path in activity_gpx_info:
+        # There are some spatialite functions for working with GPX data, but
+        # I couldn't get the libxml2 module working for Ubuntu 20.04.
+        # To see how to use these functions, see
+        # https://www.gaia-gis.it/fossil/libspatialite/wiki?name=GPX+tracks.
+        # This might be an easier approach when they're more widely supported.
+        #
+        # Instead, we'll use Fiona and Shapely to load the GPX file and get
+        # the WKT we can insert into Spatialite.
+        # See https://ocefpaf.github.io/python4oceanographers/blog/2015/08/03/fiona_gpx/
+        tracks = fiona.open(gpx_path, layer="tracks")
+        geom = tracks[0]
+        shp = shape({
+            'type': 'MultiLineString',
+            'coordinates': geom['geometry']['coordinates'],
+        })
+
+        # Uses UPSERT syntax (https://www.sqlite.org/draft/lang_UPSERT.html),
+        # available since 3.24.0.
+        # See https://stackoverflow.com/questions/418898/sqlite-upsert-not-insert-or-replace
+        insert_track_sql = """
+        INSERT INTO activity_gpx_tracks
+        VALUES (?, MultiLineStringFromText(?, 4326))
+        ON CONFLICT(id) DO UPDATE SET geometry=excluded.geometry
+        """
+        cur.execute(insert_track_sql, (activity_id, shp.wkt))
+
+    con.commit()
+
+@cli.command()
+@click.argument(
+    "activity_id",
+    type=int,
+    required=True,
+)
+@click.argument(
+    "gpx_path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+@click.argument(
+    "db_path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+def load_activity_gpx(activity_id, gpx_path, db_path):
+    """Load an activity GPX file into a SQLite database"""
+    load_activity_gpx_tracks(
+        [(activity_id, gpx_path)],
+        db_path
+    )

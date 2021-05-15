@@ -6,6 +6,8 @@ Inspired by the [Dogsheep](https://dogsheep.github.io/) project.
 
 ## Assumptions
 
+You have SQLite version 3.24 or later.
+
 You've created a Strava API application.
 
 TODO: Document this process.
@@ -96,9 +98,9 @@ env $(cat .env | xargs) strava-to-sqlite auth
 
 ## To do
 
-- Load GPX into database
-
+- Load activities since last record in database
 - Load data from bulk export
+- Download only GPX files that don't have a record in the GPX table
 
 ## Similar projects
 

@@ -28,9 +28,11 @@ setup(
     """,
     install_requires=[
         "click~=7.1.0",
+        "fiona~=1.8.19",
         "playwright~=1.10.0",
         "requests~=2.25.1",
         "requests-oauthlib~=1.3.0",
+        "shapely~=1.7.1",
         "sqlite-utils~=3.6"
     ],
 )
