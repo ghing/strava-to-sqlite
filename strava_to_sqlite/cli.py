@@ -1,8 +1,12 @@
 from functools import partial
 import json
 import os
+from pathlib import Path
+import re
+import shutil
 
 import click
+from playwright.sync_api import sync_playwright
 import requests
 from requests_oauthlib import OAuth2Session
 from sqlite_utils import Database
@@ -22,7 +26,7 @@ def save_token(token, json_path):
 @click.version_option()
 def cli():
     """Save data from Strava to a SQLite database"""
-        
+
 @cli.command()
 @click.option(
     "-a",
@@ -95,7 +99,7 @@ def activities(db_path, auth):
         "client_id": client_id,
         "client_secret": client_secret,
     }
-    refresh_url = "https://www.strava.com/oauth/token" 
+    refresh_url = "https://www.strava.com/oauth/token"
 
     token_saver = partial(save_token, json_path=auth)
 
@@ -125,3 +129,148 @@ def activities(db_path, auth):
     # TODO: Handle getting only recent values.
     db = Database(db_path)
     db["activities"].insert_all(activities, pk="id", truncate=True)
+
+def slugify(val, sep="_"):
+    """Create a slug appropriate for use in filenames"""
+    # Convert to lower case
+    slugified = val.lower()
+
+    # Remove special characters
+    slugified = re.sub(r"[#'\",\-]", "", slugified)
+
+    # Replace whitespace with separator and remove repeated whitespace
+    slugified = re.sub(r"\s+", sep, slugified)
+
+    return slugified
+
+def gpx_filename(activity):
+    """Get a standardized filename for a GPX file for an activity"""
+    # Get the local activity date in YYYYMMDD format
+    activity_date_slug = activity["start_date_local"][:10].replace("-", "")
+
+    return f"{activity_date_slug}_{activity['id']}_{slugify(activity['name'])}.gpx"
+
+def download_gpx(playwright, activities, username, password, user_data_dir, gpx_dir):
+    """Use playwright to download a GPX file"""
+    context = playwright.chromium.launch_persistent_context(
+        user_data_dir,
+        headless=False,
+        accept_downloads=True,
+    )
+    # Open new page
+    page = context.new_page()
+
+    # Go to https://www.strava.com/
+    page.goto("https://www.strava.com/")
+
+    # Click text=Log In
+    page.click("text=Log In")
+    # assert page.url == "https://www.strava.com/login"
+
+    # Click :nth-match(div:has-text("Log In Log in using Facebook Log in using Google Sign in with Apple Or log in wi"), 2)
+    page.click(":nth-match(div:has-text(\"Log In Log in using Facebook Log in using Google Sign in with Apple Or log in wi\"), 2)")
+
+    # Click [placeholder="Your Email"]
+    page.click("[placeholder=\"Your Email\"]")
+    # Fill [placeholder="Your Email"]
+    page.fill("[placeholder=\"Your Email\"]", username)
+    # Press Tab
+    page.press("[placeholder=\"Your Email\"]", "Tab")
+    # Fill [placeholder="Password"]
+    page.fill("[placeholder=\"Password\"]", password)
+    # Click button:has-text("Log In")
+    page.click("button:has-text(\"Log In\")")
+    # assert page.url == "https://www.strava.com/dashboard"
+
+    for activity in activities:
+        gpx_path = gpx_dir / gpx_filename(activity)
+
+        # TODO: Support forcing the re-download of the activity
+        if gpx_path.exists():
+            # Don't re-download a GPX file that already exists
+            continue
+
+        # Go to page for activities 
+        page.goto(f"https://www.strava.com/activities/{activity['id']}")
+
+        # Click [aria-label="Actions"]
+        page.click("[aria-label=\"Actions\"]")
+        # Click text=Export GPX
+        with page.expect_download() as download_info:
+            page.click("text=Export GPX")
+
+        download = download_info.value
+        path = download.path()
+
+        shutil.copyfile(path, gpx_path)
+
+    # ---------------------
+    context.close()
+
+    # TODO: Load files into the database
+
+@cli.command()
+@click.argument(
+    "db_path",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    required=True,
+)
+@click.option(
+    "-a",
+    "--auth",
+    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
+    default="auth.json",
+    help="Path to save tokens to, defaults to auth.json",
+)
+@click.option(
+    "-c",
+    "--cache-dir",
+    type=click.Path(file_okay=False, dir_okay=True, allow_dash=False),
+    default="cache",
+    help="Path to save downloaded GPX files to, defaults to cache",
+)
+@click.option(
+    "-i",
+    "--activity-id",
+    type=int,
+    multiple=True,
+    default=[],
+    help="Activity ID of activity GPX to download",
+)
+def activity_gpx(db_path, auth, cache_dir, activity_id=[]):
+    """Download GPX for an activity or all activities."""
+    STRAVA_USERNAME = os.environ["STRAVA_USERNAME"]
+    STRAVA_PASSWORD = os.environ["STRAVA_PASSWORD"]
+
+    cache_dir= Path(cache_dir)
+    user_data_dir = cache_dir / "playwright_user_data"
+    gpx_dir = cache_dir / "gpx"
+    os.makedirs(user_data_dir, exist_ok=True)
+    os.makedirs(gpx_dir, exist_ok=True)
+
+    db = Database(db_path)
+
+    if len(activity_id) != 0:
+        # User specified explicit activity IDs 
+
+        # HACK: AFAIK Python SQLite parameter replacement only supports
+        # individual values, so since we have a list of IDs, we need to
+        # build up the placeholder string based on the number of values
+        # in our list of activity IDs. I think this is relatively safe
+        # since we're not using string interpolation to insert values
+        # into the SQL, just a certain number of `?` placeholders.
+        in_placeholder = ", ".join(["?" for i in range(len(activity_id))])
+        activities = list(db["activities"].rows_where(
+            f"id IN ({in_placeholder})",
+            activity_id,
+            select="id, name, start_date_local",
+        ))
+
+    else:
+        # User didn't specify activity IDs. Download them all.
+        activities = list(db["activities"].rows_where(
+            select="id, name, start_date_local"
+        ))
+
+    with sync_playwright() as playwright:
+        download_gpx(playwright, activities, STRAVA_USERNAME, STRAVA_PASSWORD, user_data_dir, gpx_dir)

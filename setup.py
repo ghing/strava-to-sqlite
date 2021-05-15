@@ -28,6 +28,7 @@ setup(
     """,
     install_requires=[
         "click~=7.1.0",
+        "playwright~=1.10.0",
         "requests~=2.25.1",
         "requests-oauthlib~=1.3.0",
         "sqlite-utils~=3.6"
