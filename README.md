@@ -39,7 +39,7 @@ Configuration is through environment variables.
 ## Installation
 
 ```
-pip install TK
+pip install git+https://github.com/ghing/strava-to-sqlite.git
 ```
 
 ## Authentication
