@@ -99,7 +99,7 @@ env $(cat .env | xargs) strava-to-sqlite auth
 ## To do
 
 - Load activities since last record in database
-- Load data from bulk export
+- Load data from [bulk export](https://support.strava.com/hc/en-us/articles/216918437-Exporting-your-Data-and-Bulk-Export#Bulk)
 - Download only GPX files that don't have a record in the GPX table
 
 ## Similar projects
