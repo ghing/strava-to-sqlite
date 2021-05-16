@@ -8,7 +8,7 @@ from urllib.parse import urlparse, parse_qs
 class AuthHTTPRequestHandler(BaseHTTPRequestHandler):
     def _set_headers(self):
         self.send_response(200)
-        self.send_header('Content-type', 'text/html')
+        self.send_header("Content-type", "text/html")
         self.end_headers()
 
     def do_GET(self):
@@ -21,8 +21,10 @@ class AuthHTTPRequestHandler(BaseHTTPRequestHandler):
         # h/t https://stackoverflow.com/questions/19040055/how-do-i-shutdown-an-httpserver-from-inside-a-request-handler-in-python
         threading.Thread(target=self.server.shutdown, daemon=True).start()
 
+
 class DataSavingHTTPServer(HTTPServer):
     """A simple HTTP server that allows storing simple data"""
+
     def __init__(self, server_address, RequestHandlerClass):
         super().__init__(server_address, RequestHandlerClass)
         self._app_data = {}

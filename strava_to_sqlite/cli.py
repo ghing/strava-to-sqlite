@@ -28,10 +28,12 @@ def save_token(token, json_path):
     with open(json_path, "w") as outf:
         outf.write(json.dumps(token))
 
+
 @click.group()
 @click.version_option()
 def cli():
     """Save data from Strava to a SQLite database"""
+
 
 @cli.command()
 @click.option(
@@ -49,18 +51,13 @@ def auth(auth):
     scope = [
         "activity:read_all",
     ]
-    oauth = OAuth2Session(
-        client_id,
-        redirect_uri="http://localhost:8080/",
-        scope=scope
-    )
+    oauth = OAuth2Session(client_id, redirect_uri="http://localhost:8080/", scope=scope)
     authorization_url, state = oauth.authorization_url(
-        "https://www.strava.com/oauth/authorize",
-        approval_prompt="force"
+        "https://www.strava.com/oauth/authorize", approval_prompt="force"
     )
     print(f"Please visit {authorization_url}")
 
-    host = ''
+    host = ""
     port = 8080
     server = DataSavingHTTPServer((host, port), AuthHTTPRequestHandler)
     server.serve_forever()
@@ -73,7 +70,7 @@ def auth(auth):
         client_secret=client_secret,
         code=server.get_app_data("authorization_code"),
         # This is required to get this to work with Strava's endpoint
-        include_client_id=True
+        include_client_id=True,
     )
     save_token(token, auth)
 
@@ -91,11 +88,7 @@ def auth(auth):
     default="auth.json",
     help="Path to save tokens to, defaults to auth.json",
 )
-@click.option(
-    "-l",
-    "--all-activities",
-    is_flag=True
-)
+@click.option("-l", "--all-activities", is_flag=True)
 def activities(db_path, auth, all_activities=False):
     """Fetch activities feed"""
     client_id = os.environ["STRAVA_CLIENT_ID"]
@@ -119,15 +112,14 @@ def activities(db_path, auth, all_activities=False):
         token=token,
         auto_refresh_url=refresh_url,
         auto_refresh_kwargs=extra,
-        token_updater=token_saver
+        token_updater=token_saver,
     )
 
     db = Database(db_path)
 
     try:
         max_start_date = list(
-            db["activities"]
-              .rows_where(select="MAX(start_date) AS max_start_date")
+            db["activities"].rows_where(select="MAX(start_date) AS max_start_date")
         )[0]["max_start_date"]
         max_start_date = datetime(
             int(max_start_date[:4]),
@@ -152,8 +144,7 @@ def activities(db_path, auth, all_activities=False):
     while True:
         params["page"] = page
         resp = client.get(
-            "https://www.strava.com/api/v3/athlete/activities",
-            params=params
+            "https://www.strava.com/api/v3/athlete/activities", params=params
         )
 
         if resp.status_code != 200:
@@ -172,6 +163,7 @@ def activities(db_path, auth, all_activities=False):
 
     db["activities"].insert_all(activities, pk="id", truncate=True)
 
+
 def slugify(val, sep="_"):
     """Create a slug appropriate for use in filenames"""
     # Convert to lower case
@@ -185,12 +177,14 @@ def slugify(val, sep="_"):
 
     return slugified
 
+
 def gpx_filename(activity):
     """Get a standardized filename for a GPX file for an activity"""
     # Get the local activity date in YYYYMMDD format
     activity_date_slug = activity["start_date_local"][:10].replace("-", "")
 
     return f"{activity_date_slug}_{activity['id']}_{slugify(activity['name'])}.gpx"
+
 
 def download_gpx(playwright, activities, username, password, user_data_dir, gpx_dir):
     """Use playwright to download a GPX file"""
@@ -210,18 +204,20 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
     # assert page.url == "https://www.strava.com/login"
 
     # Click :nth-match(div:has-text("Log In Log in using Facebook Log in using Google Sign in with Apple Or log in wi"), 2)
-    page.click(":nth-match(div:has-text(\"Log In Log in using Facebook Log in using Google Sign in with Apple Or log in wi\"), 2)")
+    page.click(
+        ':nth-match(div:has-text("Log In Log in using Facebook Log in using Google Sign in with Apple Or log in wi"), 2)'
+    )
 
     # Click [placeholder="Your Email"]
-    page.click("[placeholder=\"Your Email\"]")
+    page.click('[placeholder="Your Email"]')
     # Fill [placeholder="Your Email"]
-    page.fill("[placeholder=\"Your Email\"]", username)
+    page.fill('[placeholder="Your Email"]', username)
     # Press Tab
-    page.press("[placeholder=\"Your Email\"]", "Tab")
+    page.press('[placeholder="Your Email"]', "Tab")
     # Fill [placeholder="Password"]
-    page.fill("[placeholder=\"Password\"]", password)
+    page.fill('[placeholder="Password"]', password)
     # Click button:has-text("Log In")
-    page.click("button:has-text(\"Log In\")")
+    page.click('button:has-text("Log In")')
     # assert page.url == "https://www.strava.com/dashboard"
 
     activity_gpx_info = []
@@ -232,14 +228,14 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
         # TODO: Support forcing the re-download of the activity
         if gpx_path.exists():
             # Don't re-download a GPX file that already exists
-            activity_gpx_info.append((activity['id'], gpx_path))
+            activity_gpx_info.append((activity["id"], gpx_path))
             continue
 
         # Go to page for activities
         page.goto(f"https://www.strava.com/activities/{activity['id']}")
 
         # Click [aria-label="Actions"]
-        page.click("[aria-label=\"Actions\"]")
+        page.click('[aria-label="Actions"]')
         # Click text=Export GPX
         with page.expect_download() as download_info:
             page.click("text=Export GPX")
@@ -248,13 +244,14 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
         path = download.path()
 
         shutil.copyfile(path, gpx_path)
-        activity_gpx_info.append((activity['id'], gpx_path))
+        activity_gpx_info.append((activity["id"], gpx_path))
 
         sleep(randint(1, 5))
 
     context.close()
 
     return activity_gpx_info
+
 
 @cli.command()
 @click.argument(
@@ -284,17 +281,13 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
     default=[],
     help="Activity ID of activity GPX to download",
 )
-@click.option(
-    "-l",
-    "--all-activities",
-    is_flag=True
-)
+@click.option("-l", "--all-activities", is_flag=True)
 def activity_gpx(db_path, auth, cache_dir, activity_id=[], all_activities=False):
     """Download GPX for an activity or all activities."""
     STRAVA_USERNAME = os.environ["STRAVA_USERNAME"]
     STRAVA_PASSWORD = os.environ["STRAVA_PASSWORD"]
 
-    cache_dir= Path(cache_dir)
+    cache_dir = Path(cache_dir)
     user_data_dir = cache_dir / "playwright_user_data"
     gpx_dir = cache_dir / "gpx"
     os.makedirs(user_data_dir, exist_ok=True)
@@ -312,17 +305,19 @@ def activity_gpx(db_path, auth, cache_dir, activity_id=[], all_activities=False)
         # since we're not using string interpolation to insert values
         # into the SQL, just a certain number of `?` placeholders.
         in_placeholder = ", ".join(["?" for i in range(len(activity_id))])
-        activities = list(db["activities"].rows_where(
-            f"id IN ({in_placeholder})",
-            activity_id,
-            select="id, name, start_date_local",
-        ))
+        activities = list(
+            db["activities"].rows_where(
+                f"id IN ({in_placeholder})",
+                activity_id,
+                select="id, name, start_date_local",
+            )
+        )
 
     elif all_activities:
         # Download GPX for all activities.
-        activities = list(db["activities"].rows_where(
-            select="id, name, start_date_local"
-        ))
+        activities = list(
+            db["activities"].rows_where(select="id, name, start_date_local")
+        )
 
     else:
         # Download only GPX files that don't have a record in the
@@ -344,10 +339,11 @@ def activity_gpx(db_path, auth, cache_dir, activity_id=[], all_activities=False)
             STRAVA_USERNAME,
             STRAVA_PASSWORD,
             user_data_dir,
-            gpx_dir
+            gpx_dir,
         )
 
     load_activity_gpx_tracks(activity_gpx_paths, db_path)
+
 
 def init_gpx_table(con):
     """Initialize spatial metadata and table for GPX data"""
@@ -381,6 +377,7 @@ def init_gpx_table(con):
 
     con.commit()
 
+
 def load_activity_gpx_tracks(activity_gpx_info, db_path):
     """Load activity GPX tracks into the SQLite database"""
     con = sqlite3.connect(db_path)
@@ -403,10 +400,12 @@ def load_activity_gpx_tracks(activity_gpx_info, db_path):
         # See https://ocefpaf.github.io/python4oceanographers/blog/2015/08/03/fiona_gpx/
         tracks = fiona.open(gpx_path, layer="tracks")
         geom = tracks[0]
-        shp = shape({
-            'type': 'MultiLineString',
-            'coordinates': geom['geometry']['coordinates'],
-        })
+        shp = shape(
+            {
+                "type": "MultiLineString",
+                "coordinates": geom["geometry"]["coordinates"],
+            }
+        )
 
         # Uses UPSERT syntax (https://www.sqlite.org/draft/lang_UPSERT.html),
         # available since 3.24.0.
@@ -419,6 +418,7 @@ def load_activity_gpx_tracks(activity_gpx_info, db_path):
         cur.execute(insert_track_sql, (activity_id, shp.wkt))
 
     con.commit()
+
 
 @cli.command()
 @click.argument(
@@ -438,7 +438,4 @@ def load_activity_gpx_tracks(activity_gpx_info, db_path):
 )
 def load_activity_gpx(activity_id, gpx_path, db_path):
     """Load an activity GPX file into a SQLite database"""
-    load_activity_gpx_tracks(
-        [(activity_id, gpx_path)],
-        db_path
-    )
+    load_activity_gpx_tracks([(activity_id, gpx_path)], db_path)

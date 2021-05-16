@@ -33,6 +33,11 @@ setup(
         "requests~=2.25.1",
         "requests-oauthlib~=1.3.0",
         "shapely~=1.7.1",
-        "sqlite-utils~=3.6"
+        "sqlite-utils~=3.6",
     ],
+    extras_require={
+        "dev": [
+            "pre-commit~=2.12.1",
+        ],
+    },
 )
