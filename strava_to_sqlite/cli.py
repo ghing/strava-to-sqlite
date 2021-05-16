@@ -1,3 +1,5 @@
+"""Command-line interface"""
+
 from datetime import datetime
 from functools import partial
 import json
@@ -7,12 +9,12 @@ from random import randint
 import re
 import shutil
 import sqlite3
+import sys
 from time import sleep
 
 import click
 import fiona
 from playwright.sync_api import sync_playwright
-import requests
 from requests_oauthlib import OAuth2Session
 from shapely.geometry import shape
 from sqlite_utils import Database
@@ -43,7 +45,7 @@ def cli():
     default="auth.json",
     help="Path to save tokens to, defaults to auth.json",
 )
-def auth(auth):
+def auth(auth):  # pylint: disable=redefined-outer-name
     """Save authentication credentials to a JSON file"""
     client_id = os.environ["STRAVA_CLIENT_ID"]
     client_secret = os.environ["STRAVA_CLIENT_SECRET"]
@@ -52,7 +54,10 @@ def auth(auth):
         "activity:read_all",
     ]
     oauth = OAuth2Session(client_id, redirect_uri="http://localhost:8080/", scope=scope)
-    authorization_url, state = oauth.authorization_url(
+    (
+        authorization_url,
+        state,  # pylint: disable=unused-variable
+    ) = oauth.authorization_url(
         "https://www.strava.com/oauth/authorize", approval_prompt="force"
     )
     print(f"Please visit {authorization_url}")
@@ -62,7 +67,7 @@ def auth(auth):
     server = DataSavingHTTPServer((host, port), AuthHTTPRequestHandler)
     server.serve_forever()
     # Get an access token
-    # See https://requests-oauthlib.readthedocs.io/en/latest/oauth2_workflow.html#web-application-flow
+    # See https://requests-oauthlib.readthedocs.io/en/latest/oauth2_workflow.html#web-application-flow pylint: disable=line-too-long
     # See also https://developers.strava.com/docs/getting-started/
     token = oauth.fetch_token(
         "https://www.strava.com/oauth/token",
@@ -89,33 +94,31 @@ def auth(auth):
     help="Path to save tokens to, defaults to auth.json",
 )
 @click.option("-l", "--all-activities", is_flag=True)
-def activities(db_path, auth, all_activities=False):
+def activities(
+    db_path, auth, all_activities=False
+):  # pylint: disable=redefined-outer-name
     """Fetch activities feed"""
     client_id = os.environ["STRAVA_CLIENT_ID"]
-    client_secret = os.environ["STRAVA_CLIENT_SECRET"]
 
-    with open(auth) as f:
+    with open(auth) as f:  # pylint: disable=invalid-name
         token = json.load(f)
 
     # See https://requests-oauthlib.readthedocs.io/en/latest/oauth2_workflow.html
     # and https://developers.strava.com/docs/authentication/#refreshingexpiredaccesstokens
-    extra = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }
-    refresh_url = "https://www.strava.com/oauth/token"
-
     token_saver = partial(save_token, json_path=auth)
 
     client = OAuth2Session(
         client_id,
         token=token,
-        auto_refresh_url=refresh_url,
-        auto_refresh_kwargs=extra,
+        auto_refresh_url="https://www.strava.com/oauth/token",
+        auto_refresh_kwargs={
+            "client_id": client_id,
+            "client_secret": os.environ["STRAVA_CLIENT_SECRET"],
+        },
         token_updater=token_saver,
     )
 
-    db = Database(db_path)
+    db = Database(db_path)  # pylint: disable=invalid-name
 
     try:
         max_start_date = list(
@@ -139,7 +142,7 @@ def activities(db_path, auth, all_activities=False):
             "after": int(max_start_date.timestamp()),
         }
 
-    activities = []
+    activities = []  # pylint: disable=redefined-outer-name
     page = 1
     while True:
         params["page"] = page
@@ -161,7 +164,9 @@ def activities(db_path, auth, all_activities=False):
         page += 1
         sleep(1)
 
-    db["activities"].insert_all(activities, pk="id", truncate=True)
+    db["activities"].insert_all(  # pylint: disable=no-member
+        activities, pk="id", truncate=True
+    )
 
 
 def slugify(val, sep="_"):
@@ -186,7 +191,14 @@ def gpx_filename(activity):
     return f"{activity_date_slug}_{activity['id']}_{slugify(activity['name'])}.gpx"
 
 
-def download_gpx(playwright, activities, username, password, user_data_dir, gpx_dir):
+def download_gpx(  # pylint: disable=too-many-arguments
+    playwright,
+    activities,  # pylint: disable=redefined-outer-name
+    username,
+    password,
+    user_data_dir,
+    gpx_dir,
+):
     """Use playwright to download a GPX file"""
     context = playwright.chromium.launch_persistent_context(
         user_data_dir,
@@ -203,9 +215,10 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
     page.click("text=Log In")
     # assert page.url == "https://www.strava.com/login"
 
-    # Click :nth-match(div:has-text("Log In Log in using Facebook Log in using Google Sign in with Apple Or log in wi"), 2)
+    # Click :nth-match(div:has-text("Log In Log in using Facebook Log in using Google Sign in with Apple Or log in wi"), 2) pylint: disable=line-too-long
     page.click(
-        ':nth-match(div:has-text("Log In Log in using Facebook Log in using Google Sign in with Apple Or log in wi"), 2)'
+        ":nth-match(div:has-text('Log In Log in using Facebook Log in using "
+        "Google Sign in with Apple Or log in wi'), 2)"
     )
 
     # Click [placeholder="Your Email"]
@@ -225,7 +238,7 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
     for activity in activities:
         gpx_path = gpx_dir / gpx_filename(activity)
 
-        # TODO: Support forcing the re-download of the activity
+        # TODO: Support forcing the re-download of the activity pylint: disable=fixme
         if gpx_path.exists():
             # Don't re-download a GPX file that already exists
             activity_gpx_info.append((activity["id"], gpx_path))
@@ -260,13 +273,6 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
     required=True,
 )
 @click.option(
-    "-a",
-    "--auth",
-    type=click.Path(file_okay=True, dir_okay=False, allow_dash=False),
-    default="auth.json",
-    help="Path to save tokens to, defaults to auth.json",
-)
-@click.option(
     "-c",
     "--cache-dir",
     type=click.Path(file_okay=False, dir_okay=True, allow_dash=False),
@@ -278,14 +284,22 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
     "--activity-id",
     type=int,
     multiple=True,
-    default=[],
+    default=None,
     help="Activity ID of activity GPX to download",
 )
 @click.option("-l", "--all-activities", is_flag=True)
-def activity_gpx(db_path, auth, cache_dir, activity_id=[], all_activities=False):
+def activity_gpx(
+    db_path,
+    cache_dir,
+    activity_id=None,
+    all_activities=False,
+):
     """Download GPX for an activity or all activities."""
-    STRAVA_USERNAME = os.environ["STRAVA_USERNAME"]
-    STRAVA_PASSWORD = os.environ["STRAVA_PASSWORD"]
+    if activity_id is None:
+        activity_id = []
+
+    strava_username = os.environ["STRAVA_USERNAME"]
+    strava_password = os.environ["STRAVA_PASSWORD"]
 
     cache_dir = Path(cache_dir)
     user_data_dir = cache_dir / "playwright_user_data"
@@ -293,7 +307,7 @@ def activity_gpx(db_path, auth, cache_dir, activity_id=[], all_activities=False)
     os.makedirs(user_data_dir, exist_ok=True)
     os.makedirs(gpx_dir, exist_ok=True)
 
-    db = Database(db_path)
+    db = Database(db_path)  # pylint: disable=invalid-name
 
     if len(activity_id) != 0:
         # User specified explicit activity IDs
@@ -305,7 +319,7 @@ def activity_gpx(db_path, auth, cache_dir, activity_id=[], all_activities=False)
         # since we're not using string interpolation to insert values
         # into the SQL, just a certain number of `?` placeholders.
         in_placeholder = ", ".join(["?" for i in range(len(activity_id))])
-        activities = list(
+        activities = list(  # pylint: disable=redefined-outer-name
             db["activities"].rows_where(
                 f"id IN ({in_placeholder})",
                 activity_id,
@@ -336,8 +350,8 @@ def activity_gpx(db_path, auth, cache_dir, activity_id=[], all_activities=False)
         activity_gpx_paths = download_gpx(
             playwright,
             activities,
-            STRAVA_USERNAME,
-            STRAVA_PASSWORD,
+            strava_username,
+            strava_password,
             user_data_dir,
             gpx_dir,
         )
@@ -361,7 +375,7 @@ def init_gpx_table(con):
         init_spatial_meta_sql = "SELECT InitSpatialMetaData();"
         cur.execute(init_spatial_meta_sql)
 
-    # TODO: Figure out how/if to enforce the foreign key constraint.
+    # TODO: Figure out how/if to enforce the foreign key constraint. pylint: disable=fixme
     create_table_sql = """
     CREATE TABLE IF NOT EXISTS activity_gpx_tracks (
         id INTEGER PRIMARY KEY
@@ -372,7 +386,14 @@ def init_gpx_table(con):
     result = cur.execute("PRAGMA table_info(activity_gpx_tracks)")
     colnames = [x[1] for x in result]
     if "geometry" not in colnames:
-        add_spatial_column_sql = "SELECT AddGeometryColumn('activity_gpx_tracks', 'geometry', 4326, 'MULTILINESTRING');"
+        add_spatial_column_sql = """
+        SELECT AddGeometryColumn(
+            'activity_gpx_tracks',
+            'geometry',
+            4326,
+            'MULTILINESTRING'
+        );
+        """
         cur.execute(add_spatial_column_sql)
 
     con.commit()

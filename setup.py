@@ -1,15 +1,18 @@
-from setuptools import setup
+"""Package installation"""
+
 import os
+from setuptools import setup
 
 VERSION = "0.0.1"
 
 
 def get_long_description():
+    """Get long package description from README"""
     with open(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md"),
         encoding="utf8",
-    ) as fp:
-        return fp.read()
+    ) as readme_fp:
+        return readme_fp.read()
 
 
 setup(
@@ -38,6 +41,7 @@ setup(
     extras_require={
         "dev": [
             "pre-commit~=2.12.1",
+            "pylint~=2.8.2",
         ],
     },
 )
