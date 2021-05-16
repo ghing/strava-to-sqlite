@@ -179,7 +179,7 @@ def activities(
         sleep(1)
 
     db["activities"].insert_all(  # pylint: disable=no-member
-        activities, pk="id", truncate=truncate
+        activities, pk="id", replace=True, truncate=truncate
     )
 
 
