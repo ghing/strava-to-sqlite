@@ -1,10 +1,13 @@
+from datetime import datetime
 from functools import partial
 import json
 import os
 from pathlib import Path
+from random import randint
 import re
 import shutil
 import sqlite3
+from time import sleep
 
 import click
 import fiona
@@ -88,7 +91,12 @@ def auth(auth):
     default="auth.json",
     help="Path to save tokens to, defaults to auth.json",
 )
-def activities(db_path, auth):
+@click.option(
+    "-l",
+    "--all-activities",
+    is_flag=True
+)
+def activities(db_path, auth, all_activities=False):
     """Fetch activities feed"""
     client_id = os.environ["STRAVA_CLIENT_ID"]
     client_secret = os.environ["STRAVA_CLIENT_SECRET"]
@@ -114,23 +122,54 @@ def activities(db_path, auth):
         token_updater=token_saver
     )
 
+    db = Database(db_path)
+
+    try:
+        max_start_date = list(
+            db["activities"]
+              .rows_where(select="MAX(start_date) AS max_start_date")
+        )[0]["max_start_date"]
+        max_start_date = datetime(
+            int(max_start_date[:4]),
+            int(max_start_date[5:7]),
+            int(max_start_date[9:10]),
+            int(max_start_date[11:13]),
+            int(max_start_date[14:16]),
+            int(max_start_date[17:19]),
+        )
+
+    except IndexError:
+        max_start_date = None
+
+    params = {}
+    if not all_activities or max_start_date is not None:
+        params = {
+            "after": int(max_start_date.timestamp()),
+        }
+
     activities = []
     page = 1
     while True:
+        params["page"] = page
         resp = client.get(
             "https://www.strava.com/api/v3/athlete/activities",
-            params={
-                "page": page,
-            }
+            params=params
         )
+
         if resp.status_code != 200:
+            if resp.status_code == 429:
+                sys.stderr.write("Request limit reached\n")
+
             break
 
-        activities += resp.json()
-        page += 1
+        activities_page = resp.json()
+        if len(activities_page) == 0:
+            break
 
-    # TODO: Handle getting only recent values.
-    db = Database(db_path)
+        activities += activities_page
+        page += 1
+        sleep(1)
+
     db["activities"].insert_all(activities, pk="id", truncate=True)
 
 def slugify(val, sep="_"):
@@ -196,7 +235,7 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
             activity_gpx_info.append((activity['id'], gpx_path))
             continue
 
-        # Go to page for activities 
+        # Go to page for activities
         page.goto(f"https://www.strava.com/activities/{activity['id']}")
 
         # Click [aria-label="Actions"]
@@ -210,6 +249,8 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
 
         shutil.copyfile(path, gpx_path)
         activity_gpx_info.append((activity['id'], gpx_path))
+
+        sleep(randint(1, 5))
 
     context.close()
 
@@ -243,7 +284,12 @@ def download_gpx(playwright, activities, username, password, user_data_dir, gpx_
     default=[],
     help="Activity ID of activity GPX to download",
 )
-def activity_gpx(db_path, auth, cache_dir, activity_id=[]):
+@click.option(
+    "-l",
+    "--all-activities",
+    is_flag=True
+)
+def activity_gpx(db_path, auth, cache_dir, activity_id=[], all_activities=False):
     """Download GPX for an activity or all activities."""
     STRAVA_USERNAME = os.environ["STRAVA_USERNAME"]
     STRAVA_PASSWORD = os.environ["STRAVA_PASSWORD"]
@@ -257,7 +303,7 @@ def activity_gpx(db_path, auth, cache_dir, activity_id=[]):
     db = Database(db_path)
 
     if len(activity_id) != 0:
-        # User specified explicit activity IDs 
+        # User specified explicit activity IDs
 
         # HACK: AFAIK Python SQLite parameter replacement only supports
         # individual values, so since we have a list of IDs, we need to
@@ -272,13 +318,24 @@ def activity_gpx(db_path, auth, cache_dir, activity_id=[]):
             select="id, name, start_date_local",
         ))
 
-    else:
-        # User didn't specify activity IDs. Download them all.
-        # TODO: Download only GPX files that don't have a record in the
-        # GPX table.
+    elif all_activities:
+        # Download GPX for all activities.
         activities = list(db["activities"].rows_where(
             select="id, name, start_date_local"
         ))
+
+    else:
+        # Download only GPX files that don't have a record in the
+        # GPX table.
+        undownloaded_gpx_sql = """
+        SELECT
+            id,
+            name,
+            start_date_local
+        FROM activities
+        WHERE id NOT IN (SELECT id FROM activity_gpx_tracks)
+        """
+        activities = db.execute(undownloaded_gpx_sql).fetchall()
 
     with sync_playwright() as playwright:
         activity_gpx_paths = download_gpx(
