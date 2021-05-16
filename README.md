@@ -42,6 +42,12 @@ Configuration is through environment variables.
 pip install git+https://github.com/ghing/strava-to-sqlite.git
 ```
 
+If you want to download GPX files for activities, you'll have to install the browsers that [Playwright](https://playwright.dev/) uses for browser automation. The Playwright package should have been installed when you installed this package, so the only additional step is to run:
+
+```
+playwright install
+```
+
 ## Authentication
 
 All other commands require fetching an OAuth token. You can do this by running:
@@ -55,8 +61,26 @@ This will create a file called auth.json in your current directory containing th
 ## Fetch activities
 
 ```
-strava-to-sqlite strava.db
+strava-to-sqlite activities strava.db
 ```
+
+By default this will fetch all activities since the most recent one already in the database.
+
+If you want to empty your database table and re-download all the activities, run:
+
+```
+strava-to-sqlite activities --all-activities --truncate strava.db
+```
+
+## Fetch GPX tracks for activities
+
+```
+strava-to-sqlite activity-gpx strava.db
+```
+
+By default it loads all GPX files corresponding to activities retrieved using the `activities` subcommand.
+
+This also saves the downloaded GPX files in a `cache/gpx` directory. You can specify the parent cache directory with the `--cache-dir` option.
 
 ## Development
 

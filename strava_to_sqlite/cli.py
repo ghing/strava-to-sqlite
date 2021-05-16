@@ -263,6 +263,11 @@ def download_gpx(  # pylint: disable=too-many-arguments
 
         # Click [aria-label="Actions"]
         page.click('[aria-label="Actions"]')
+
+        if page.query_selector("text=Export GPX") is None:
+            # Some activities don't have tracks associated with them
+            continue
+
         # Click text=Export GPX
         with page.expect_download() as download_info:
             page.click("text=Export GPX")
@@ -319,7 +324,15 @@ def activity_tuples_to_dict(activities_raw):
     default=None,
     help="Activity ID of activity GPX to download",
 )
-@click.option("-l", "--all-activities", is_flag=True)
+@click.option(
+    "-l",
+    "--all-activities",
+    is_flag=True,
+    help=(
+        "Load all activity GPX files. By default this command only "
+        "loads ones that haven't been loaded"
+    ),
+)
 def activity_gpx(
     db_path,
     cache_dir,
@@ -374,11 +387,19 @@ def activity_gpx(
             name,
             start_date_local
         FROM activities
-        WHERE id NOT IN (SELECT id FROM activity_gpx_tracks)
+        WHERE 
+            -- Use this to filter out activities that don't have GPS data
+            start_latitude IS NOT NULL
+            -- Use this to filter out already loaded GPX tracks
+            AND id NOT IN (SELECT id FROM activity_gpx_tracks)
         """
         activities = activity_tuples_to_dict(
             db.execute(undownloaded_gpx_sql).fetchall()
         )
+
+    if len(activities) == 0:
+        # No activitiy GPX to fetch
+        return
 
     with sync_playwright() as playwright:
         activity_gpx_paths = download_gpx(
