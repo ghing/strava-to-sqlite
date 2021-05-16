@@ -93,9 +93,23 @@ def auth(auth):  # pylint: disable=redefined-outer-name
     default="auth.json",
     help="Path to save tokens to, defaults to auth.json",
 )
-@click.option("-l", "--all-activities", is_flag=True)
+@click.option(
+    "-l",
+    "--all-activities",
+    is_flag=True,
+    help=(
+        "Load all activities. By default this command only downloads "
+        "activities since the last load."
+    ),
+)
+@click.option(
+    "-t",
+    "--truncate",
+    is_flag=True,
+    help="Replace existing activities with the loaded ones",
+)
 def activities(
-    db_path, auth, all_activities=False
+    db_path, auth, all_activities=False, truncate=False
 ):  # pylint: disable=redefined-outer-name
     """Fetch activities feed"""
     client_id = os.environ["STRAVA_CLIENT_ID"]
@@ -105,8 +119,6 @@ def activities(
 
     # See https://requests-oauthlib.readthedocs.io/en/latest/oauth2_workflow.html
     # and https://developers.strava.com/docs/authentication/#refreshingexpiredaccesstokens
-    token_saver = partial(save_token, json_path=auth)
-
     client = OAuth2Session(
         client_id,
         token=token,
@@ -115,7 +127,7 @@ def activities(
             "client_id": client_id,
             "client_secret": os.environ["STRAVA_CLIENT_SECRET"],
         },
-        token_updater=token_saver,
+        token_updater=partial(save_token, json_path=auth),
     )
 
     db = Database(db_path)  # pylint: disable=invalid-name
@@ -137,7 +149,9 @@ def activities(
         max_start_date = None
 
     params = {}
-    if not all_activities or max_start_date is not None:
+    if not (all_activities or max_start_date is None):
+        # User has not set the --all-activities flag and there are some
+        # existing records. Only fetch activities since the latest activity.
         params = {
             "after": int(max_start_date.timestamp()),
         }
@@ -165,7 +179,7 @@ def activities(
         sleep(1)
 
     db["activities"].insert_all(  # pylint: disable=no-member
-        activities, pk="id", truncate=True
+        activities, pk="id", truncate=truncate
     )
 
 
@@ -266,6 +280,24 @@ def download_gpx(  # pylint: disable=too-many-arguments
     return activity_gpx_info
 
 
+def activity_tuples_to_dict(activities_raw):
+    """Convert activity tuples to dictionary"""
+    # HACK: This converts them manually.
+    # It might be better to hook into SQLite to do this instead.
+    # See https://stackoverflow.com/questions/3300464/how-can-i-get-dict-from-sqlite-query
+    activities = []  # pylint: disable=redefined-outer-name
+    for activity_id, name, start_date_local in activities_raw:
+        activities.append(
+            {
+                "id": activity_id,
+                "name": name,
+                "start_date_local": start_date_local,
+            }
+        )
+
+    return activities
+
+
 @cli.command()
 @click.argument(
     "db_path",
@@ -344,7 +376,9 @@ def activity_gpx(
         FROM activities
         WHERE id NOT IN (SELECT id FROM activity_gpx_tracks)
         """
-        activities = db.execute(undownloaded_gpx_sql).fetchall()
+        activities = activity_tuples_to_dict(
+            db.execute(undownloaded_gpx_sql).fetchall()
+        )
 
     with sync_playwright() as playwright:
         activity_gpx_paths = download_gpx(
