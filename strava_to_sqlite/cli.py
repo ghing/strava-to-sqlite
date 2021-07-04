@@ -139,7 +139,7 @@ def activities(
         max_start_date = datetime(
             int(max_start_date[:4]),
             int(max_start_date[5:7]),
-            int(max_start_date[9:10]),
+            int(max_start_date[8:10]),
             int(max_start_date[11:13]),
             int(max_start_date[14:16]),
             int(max_start_date[17:19]),
